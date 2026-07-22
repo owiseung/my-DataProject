@@ -10,6 +10,7 @@
 
 import streamlit as st                         # 웹 화면(UI)을 만드는 라이브러리예요
 import requests                                 # 유튜브 API에 HTTP 요청을 보낼 때 사용해요
+import time                                     # 요청 사이에 잠깐 쉬어가기 위해 사용해요
 from datetime import datetime, timedelta, timezone  # 날짜/시간 계산에 사용해요
 
 # 브라우저 탭 제목/아이콘을 설정해요
@@ -57,6 +58,26 @@ except (KeyError, FileNotFoundError):
     st.stop()
 
 
+def request_with_retry(url, params, max_retries=4):
+    """
+    requests.get을 대신 호출해주는 함수예요. 429(요청이 너무 잦음) 오류가 나면
+    조금씩 더 길게 기다렸다가 자동으로 다시 시도해요. (하루 할당량 초과인 403과는 달라서,
+    잠깐 기다리면 대부분 해결돼요)
+    """
+    response = None
+    for attempt in range(max_retries):
+        response = requests.get(url, params=params, timeout=10)
+        if response.status_code == 429:
+            time.sleep(1.5 * (attempt + 1))  # 1.5초, 3초, 4.5초, 6초로 점점 길게 기다려요
+            continue
+        response.raise_for_status()
+        return response
+
+    # 여기까지 왔다는 건 마지막 시도까지도 429였다는 뜻이에요
+    response.raise_for_status()
+    return response
+
+
 def fetch_top_video_of_day(api_key, day, region_code=None, relevance_language=None):
     """
     특정 날짜(day)에 올라온 영상 중 좋아요 수가 가장 많은 영상 하나를 찾는 함수예요.
@@ -82,8 +103,7 @@ def fetch_top_video_of_day(api_key, day, region_code=None, relevance_language=No
     if relevance_language:
         search_params["relevanceLanguage"] = relevance_language
 
-    search_response = requests.get(f"{BASE_URL}/search", params=search_params, timeout=10)
-    search_response.raise_for_status()
+    search_response = request_with_retry(f"{BASE_URL}/search", search_params)
     search_data = search_response.json()
 
     video_ids = [
@@ -100,8 +120,7 @@ def fetch_top_video_of_day(api_key, day, region_code=None, relevance_language=No
         "id": ",".join(video_ids),
         "key": api_key,
     }
-    videos_response = requests.get(f"{BASE_URL}/videos", params=videos_params, timeout=10)
-    videos_response.raise_for_status()
+    videos_response = request_with_retry(f"{BASE_URL}/videos", videos_params)
     videos_data = videos_response.json()
 
     best_video = None
@@ -189,6 +208,7 @@ if run_button:
             day_result[bucket_label] = video
             day_result[f"{bucket_label}_오류"] = error_note
             progress_bar.progress(step / total_steps)
+            time.sleep(0.3)  # 요청이 너무 몰리지 않게 짧게 쉬어가요
 
         results.append(day_result)
         if quota_exceeded:
