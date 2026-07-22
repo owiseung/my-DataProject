@@ -172,17 +172,22 @@ if run_button:
             status_text.text(f"{day} · {bucket_label} 데이터를 가져오는 중... ({step}/{total_steps})")
 
             video = None
+            error_note = None
             try:
                 video = fetch_top_video_of_day(API_KEY, day, region_code, relevance_language)
+                if video is None:
+                    error_note = "empty"  # 검색 자체는 성공했지만, 그 날짜엔 결과가 하나도 없었어요
             except requests.exceptions.HTTPError as error:
                 status_code = error.response.status_code if error.response is not None else None
                 if status_code == 403:
                     quota_exceeded = True
                     break  # 안쪽(국내/해외) 반복문만 멈춰요
+                error_note = f"http_{status_code}"
             except requests.exceptions.RequestException:
-                pass  # 이 조합만 건너뛰고 계속 진행해요
+                error_note = "network"  # 네트워크 오류 등
 
             day_result[bucket_label] = video
+            day_result[f"{bucket_label}_오류"] = error_note
             progress_bar.progress(step / total_steps)
 
         results.append(day_result)
@@ -201,11 +206,18 @@ if run_button:
         # ------------------------------------------------------------
         # 날짜별로 국내/해외 영상을 카드 형태로 보여줘요. (최근 날짜가 위로 오게)
         # ------------------------------------------------------------
-        def render_video_card(column, video):
+        def render_video_card(column, video, error_note=None):
             """영상 정보를 썸네일 + 제목 + 좋아요 수 + '새 탭에서 보기' 버튼으로 보여주는 함수예요."""
             with column:
                 if video is None:
-                    st.caption("데이터를 찾지 못했어요.")
+                    if error_note == "empty":
+                        st.caption("이 날짜엔 검색 결과 자체가 없었어요. (색인 반영 지연일 수 있어요)")
+                    elif error_note == "network":
+                        st.caption("⚠️ 네트워크 오류로 가져오지 못했어요.")
+                    elif error_note:
+                        st.caption(f"⚠️ 오류로 가져오지 못했어요 (코드: {error_note}).")
+                    else:
+                        st.caption("데이터를 찾지 못했어요.")
                     return
                 if video["thumbnail_url"]:
                     st.image(video["thumbnail_url"], use_container_width=True)
@@ -221,8 +233,8 @@ if run_button:
 
             with col_domestic:
                 st.markdown("#### 🇰🇷 국내")
-            render_video_card(col_domestic, day_result.get("국내"))
+            render_video_card(col_domestic, day_result.get("국내"), day_result.get("국내_오류"))
 
             with col_global:
                 st.markdown("#### 🌎 해외 전체")
-            render_video_card(col_global, day_result.get("해외 전체"))
+            render_video_card(col_global, day_result.get("해외 전체"), day_result.get("해외 전체_오류"))
